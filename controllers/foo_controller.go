@@ -20,7 +20,11 @@ import (
 	"context"
 
 	"github.com/go-logr/logr"
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -30,8 +34,9 @@ import (
 // FooReconciler reconciles a Foo object
 type FooReconciler struct {
 	client.Client
-	Log    logr.Logger
-	Scheme *runtime.Scheme
+	Log      logr.Logger
+	Scheme   *runtime.Scheme
+	Recorder record.EventRecorder
 }
 
 // +kubebuilder:rbac:groups=samplecontroller.k8s.io,resources=foos,verbs=get;list;watch;create;update;patch;delete
@@ -63,11 +68,83 @@ func (r *FooReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 		// on deleted requests.
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
+
+	/*
+		### 2: Clean Up old Deployment which had been owned by Foo Resource.
+		We'll find deployment object which foo object owns.
+		If there is a deployment which is owned by foo and it doesn't match foo.spec.deploymentName,
+		we clean up the deployment object.
+		(If we do nothing without this func, the old deployment object keeps existing.)
+	*/
+	if err := r.cleanupOwnedResources(ctx, log, &foo); err != nil {
+		log.Error(err, "failed to clean up old Deployment resources for this Foo")
+		return ctrl.Result{}, err
+	}
+
 	return ctrl.Result{}, nil
 }
 
+// cleanupOwnedResources will delete any existing Deployment resources that
+// were created for the given Foo that no longer match the
+// foo.spec.deploymentName field.
+func (r *FooReconciler) cleanupOwnedResources(ctx context.Context, log logr.Logger, foo *samplecontrollerv1alpha1.Foo) error {
+	log.Info("finding existing Deployments for Foo resource")
+
+	// List all deployment resources owned by this Foo
+	var deployments appsv1.DeploymentList
+	if err := r.List(ctx, &deployments, client.InNamespace(foo.Namespace), client.MatchingFields(map[string]string{deploymentOwnerKey: foo.Name})); err != nil {
+		return err
+	}
+
+	// Delete deployment if the deployment name doesn't match foo.spec.deploymentName
+	for _, deployment := range deployments.Items {
+		if deployment.Name == foo.Spec.DeploymentName {
+			// If this deployment's name matches the one on the Foo resource
+			// then do not delete it.
+			continue
+		}
+
+		// Delete old deployment object which doesn't match foo.spec.deploymentName
+		if err := r.Delete(ctx, &deployment); err != nil {
+			log.Error(err, "failed to delete Deployment resource")
+			return err
+		}
+
+		log.Info("delete deployment resource: " + deployment.Name)
+		r.Recorder.Eventf(foo, corev1.EventTypeNormal, "Deleted", "Deleted deployment %q", deployment.Name)
+	}
+
+	return nil
+}
+
+var (
+	deploymentOwnerKey = ".metadata.controller"
+	apiGVStr           = samplecontrollerv1alpha1.GroupVersion.String()
+)
+
 func (r *FooReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	// add deploymentOwnerKey index to deployment object which foo resource owns
+	if err := mgr.GetFieldIndexer().IndexField(&appsv1.Deployment{}, deploymentOwnerKey, func(rawObj runtime.Object) []string {
+		// grab the deployment object, extract the owner...
+		deployment := rawObj.(*appsv1.Deployment)
+		owner := metav1.GetControllerOf(deployment)
+		if owner == nil {
+			return nil
+		}
+		// ...make sure it's a Foo...
+		if owner.APIVersion != apiGVStr || owner.Kind != "Foo" {
+			return nil
+		}
+
+		// ...and if so, return it
+		return []string{owner.Name}
+	}); err != nil {
+		return err
+	}
+
+	// define to watch targets...Foo resource and owned Deployment
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&samplecontrollerv1alpha1.Foo{}).
+		Owns(&appsv1.Deployment{}).
 		Complete(r)
 }
