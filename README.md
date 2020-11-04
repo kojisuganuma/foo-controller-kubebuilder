@@ -10,3 +10,4 @@
     - Foo Object を in-memory-cache から取得する
     - 古い Deployment が存在していたら削除する
     - Foo が管理する Deployment を作成または更新する
+    - Foo ステータスを更新する
