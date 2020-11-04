@@ -7,3 +7,4 @@
   - もろもろ import
   - RBAC Marker を必要に応じて追加
   - Reconcile 関数の修正
+    - Foo Object を in-memory-cache から取得する
