@@ -14,3 +14,4 @@
 - main 関数を修正
   - もろもろ import
   - resync period を追加
+  - FooReconciler スキーマを修正
