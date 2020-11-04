@@ -19,15 +19,15 @@ package main
 import (
 	"flag"
 	"os"
+	"time"
 
+	samplecontrollerv1alpha1 "github.com/govargo/foo-controller-kubebuilder/api/v1alpha1"
+	"github.com/govargo/foo-controller-kubebuilder/controllers"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
-
-	samplecontrollerv1alpha1 "github.com/kojisuganuma/foo-controller-kubebuilder/api/v1alpha1"
-	"github.com/kojisuganuma/foo-controller-kubebuilder/controllers"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -53,8 +53,10 @@ func main() {
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseDevMode(true)))
+	var resyncPeriod = time.Second * 30
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+		SyncPeriod:         &resyncPeriod,
 		Scheme:             scheme,
 		MetricsBindAddress: metricsAddr,
 		Port:               9443,
